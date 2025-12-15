@@ -5,6 +5,7 @@ import asyncio
 import tempfile
 import os
 import hashlib
+from threading import Thread
 
 app = Flask(__name__)
 CORS(app)
@@ -539,12 +540,21 @@ VOICES = {
 AUDIO_DIR = "audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
+# Hash function for caching
 def make_hash(text, voice):
     return hashlib.md5(f"{text}_{voice}".encode()).hexdigest()
 
-async def generate_tts(path, text, voice):
+# Async TTS generator
+async def generate_tts_async(path, text, voice):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(path)
+
+# Thread-safe wrapper
+def generate_tts(text, voice, path):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(generate_tts_async(path, text, voice))
+    loop.close()
 
 @app.route("/tts", methods=["GET"])
 def tts():
@@ -561,9 +571,11 @@ def tts():
     audio_hash = make_hash(text, voice)
     audio_path = os.path.join(AUDIO_DIR, f"{audio_hash}.mp3")
 
-    # Generate once (cache)
+    # Generate audio in a thread if not cached
     if not os.path.exists(audio_path):
-        asyncio.run(generate_tts(audio_path, text, voice))
+        thread = Thread(target=generate_tts, args=(text, voice, audio_path))
+        thread.start()
+        thread.join()  # wait for completion
 
     return jsonify({
         "hash": audio_hash,
@@ -574,10 +586,8 @@ def tts():
 @app.route("/audio/<audio_hash>")
 def audio(audio_hash):
     audio_path = os.path.join(AUDIO_DIR, f"{audio_hash}.mp3")
-
     if not os.path.exists(audio_path):
         return jsonify({"error": "audio not found"}), 404
-
     return send_file(audio_path, mimetype="audio/mpeg")
 
 @app.route("/voices")
