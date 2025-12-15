@@ -1,33 +1,13 @@
-"""
-Edge TTS API for Vercel
-Single-file implementation
-"""
-
+from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS
 import edge_tts
 import asyncio
-import io
-from typing import Optional
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+import tempfile
+import os
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Edge TTS API",
-    description="Text-to-Speech using Microsoft Edge TTS",
-    version="1.0.0"
-)
+app = Flask(__name__)
+CORS(app)
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Available voices
 VOICES = {
     "af_za_adri3_female": "af-ZA-AdriNeural3",
     "af_za_willem3_male": "af-ZA-WillemNeural3",
@@ -555,161 +535,39 @@ VOICES = {
 }
 
 
-@app.get("/")
-async def root():
-    """Root endpoint with API information"""
-    return {
-        "message": "Edge TTS API is running",
-        "usage": {
-            "text_to_speech": "GET /tts?text=YourText&voice=voiceName",
-            "list_voices": "GET /voices",
-            "health_check": "GET /health"
-        },
-        "example": "https://your-vercel-app.vercel.app/tts?text=Hello%20World&voice=jenny"
-    }
+def generate_tts(text, voice):
+    async def run():
+        communicate = edge_tts.Communicate(text, voice)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        await communicate.save(tmp.name)
+        return tmp.name
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "edge-tts-api",
-        "timestamp": asyncio.get_event_loop().time()
-    }
+    return asyncio.run(run())
 
-@app.get("/voices")
-async def list_voices():
-    """List all available voices"""
-    return {
-        "voices": VOICES,
-        "count": len(VOICES),
-        "default": "jenny"
-    }
+@app.route("/tts", methods=["GET"])
+def tts():
+    text = request.args.get("text")
+    voice_id = request.args.get("voice", "jenny").lower()
 
-@app.get("/tts")
-async def text_to_speech(
-    text: str = Query(..., min_length=1, max_length=2000, description="Text to convert to speech"),
-    voice: str = Query("jenny", description="Voice name (see /voices endpoint)")
-):
-    """
-    Convert text to speech and return as MP3 audio
-    
-    Args:
-        text: The text to convert to speech (1-2000 characters)
-        voice: Voice name (default: "jenny")
-    
-    Returns:
-        MP3 audio stream
-    """
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+
+    if voice_id not in VOICES:
+        return jsonify({
+            "error": "Invalid voice",
+            "available_voices": list(VOICES.keys())
+        }), 400
+
+    audio_file = generate_tts(text, VOICES[voice_id])
+
     try:
-        # Validate and get voice
-        if voice not in VOICES:
-            # If voice not found, use default
-            voice_key = "jenny"
-        else:
-            voice_key = voice
-        
-        voice_code = VOICES[voice_key]
-        
-        # Generate speech
-        communicate = edge_tts.Communicate(text, voice_code)
-        
-        # Create async generator for audio chunks
-        async def generate_audio():
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    yield chunk["data"]
-        
-        # Return streaming response
-        return StreamingResponse(
-            generate_audio(),
-            media_type="audio/mpeg",
-            headers={
-                "Content-Disposition": f'attachment; filename="tts_{voice_key}.mp3"',
-                "X-TTS-Voice": voice_code,
-                "X-TTS-Text-Length": str(len(text))
-            }
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate speech: {str(e)}"
-        )
+        return send_file(audio_file, mimetype="audio/mpeg")
+    finally:
+        os.unlink(audio_file)
 
-@app.post("/tts")
-async def text_to_speech_post(
-    text: str = Query(..., min_length=1, max_length=2000),
-    voice: str = Query("jenny")
-):
-    """Alternative endpoint using POST method"""
-    return await text_to_speech(text, voice)
+@app.route("/voices", methods=["GET"])
+def voices():
+    return jsonify(VOICES)
 
-@app.get("/download")
-async def download_tts(
-    text: str = Query(..., min_length=1, max_length=2000),
-    voice: str = Query("jenny"),
-    filename: str = Query("speech.mp3", description="Custom filename for download")
-):
-    """Generate and download TTS with custom filename"""
-    try:
-        if voice not in VOICES:
-            voice_key = "jenny"
-        else:
-            voice_key = voice
-        
-        voice_code = VOICES[voice_key]
-        communicate = edge_tts.Communicate(text, voice_code)
-        
-        async def generate_audio():
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    yield chunk["data"]
-        
-        return StreamingResponse(
-            generate_audio(),
-            media_type="audio/mpeg",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "X-TTS-Voice": voice_code
-            }
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Error handlers
-@app.exception_handler(404)
-async def not_found_handler(request, exc):
-    return JSONResponse(
-        status_code=404,
-        content={
-            "error": "Endpoint not found",
-            "available_endpoints": ["/", "/tts", "/voices", "/health", "/download"],
-            "documentation": "Visit / for usage instructions"
-        }
-    )
-
-@app.exception_handler(500)
-async def server_error_handler(request, exc):
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "message": "Please check your input and try again"
-        }
-    )
-
-# Vercel handler
-handler = app
-
-# For local development
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "api.tts:app",
-        host="0.0.0.0",
-        port=3000,
-        reload=True,
-        log_level="info"
-    )
+    app.run(port=5000, debug=True)
