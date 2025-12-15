@@ -4,6 +4,7 @@ import edge_tts
 import asyncio
 import tempfile
 import os
+import hashlib
 
 app = Flask(__name__)
 CORS(app)
@@ -535,45 +536,53 @@ VOICES = {
 }
 
 
-def generate_tts(text, voice):
-    async def run():
-        communicate = edge_tts.Communicate(text, voice)
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        await communicate.save(tmp.name)
-        return tmp.name
-    return asyncio.run(run())
+AUDIO_DIR = "audio"
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+def make_hash(text, voice):
+    return hashlib.md5(f"{text}_{voice}".encode()).hexdigest()
+
+async def generate_tts(path, text, voice):
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(path)
 
 @app.route("/tts", methods=["GET"])
 def tts():
     text = request.args.get("text", "").strip()
-    voice_id = request.args.get("voice", "jenny").lower().strip()
+    voice_id = request.args.get("voice", "jenny").lower()
 
-    # ❌ Missing text
     if not text:
-        return jsonify({"error": "text parameter is required"}), 400
+        return jsonify({"error": "text is required"}), 400
 
-    # ❌ Invalid voice → do NOT return voice list here
     if voice_id not in VOICES:
-        return jsonify({"error": "Invalid voice"}), 400
+        return jsonify({"error": "invalid voice"}), 400
 
-    audio_file = generate_tts(text, VOICES[voice_id])
+    voice = VOICES[voice_id]
+    audio_hash = make_hash(text, voice)
+    audio_path = os.path.join(AUDIO_DIR, f"{audio_hash}.mp3")
 
-    try:
-        return send_file(
-            audio_file,
-            mimetype="audio/mpeg",
-            as_attachment=False,
-            download_name="speech.mp3"
-        )
-    finally:
-        if os.path.exists(audio_file):
-            os.unlink(audio_file)
+    # Generate once (cache)
+    if not os.path.exists(audio_path):
+        asyncio.run(generate_tts(audio_path, text, voice))
 
-@app.route("/voices", methods=["GET"])
-def voices():
     return jsonify({
-        "voices": list(VOICES.keys())
+        "hash": audio_hash,
+        "voice": voice_id,
+        "audio_url": f"/audio/{audio_hash}"
     })
+
+@app.route("/audio/<audio_hash>")
+def audio(audio_hash):
+    audio_path = os.path.join(AUDIO_DIR, f"{audio_hash}.mp3")
+
+    if not os.path.exists(audio_path):
+        return jsonify({"error": "audio not found"}), 404
+
+    return send_file(audio_path, mimetype="audio/mpeg")
+
+@app.route("/voices")
+def voices():
+    return jsonify({"voices": list(VOICES.keys())})
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
