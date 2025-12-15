@@ -541,33 +541,39 @@ def generate_tts(text, voice):
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         await communicate.save(tmp.name)
         return tmp.name
-
     return asyncio.run(run())
 
 @app.route("/tts", methods=["GET"])
 def tts():
-    text = request.args.get("text")
-    voice_id = request.args.get("voice", "jenny").lower()
+    text = request.args.get("text", "").strip()
+    voice_id = request.args.get("voice", "jenny").lower().strip()
 
+    # ❌ Missing text
     if not text:
-        return jsonify({"error": "text is required"}), 400
+        return jsonify({"error": "text parameter is required"}), 400
 
+    # ❌ Invalid voice → do NOT return voice list here
     if voice_id not in VOICES:
-        return jsonify({
-            "error": "Invalid voice",
-            "available_voices": list(VOICES.keys())
-        }), 400
+        return jsonify({"error": "Invalid voice"}), 400
 
     audio_file = generate_tts(text, VOICES[voice_id])
 
     try:
-        return send_file(audio_file, mimetype="audio/mpeg")
+        return send_file(
+            audio_file,
+            mimetype="audio/mpeg",
+            as_attachment=False,
+            download_name="speech.mp3"
+        )
     finally:
-        os.unlink(audio_file)
+        if os.path.exists(audio_file):
+            os.unlink(audio_file)
 
 @app.route("/voices", methods=["GET"])
 def voices():
-    return jsonify(VOICES)
+    return jsonify({
+        "voices": list(VOICES.keys())
+    })
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
