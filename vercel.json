@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "vercel_google_tts_api.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "vercel_google_tts_api.py"
+    }
+  ]
+}
