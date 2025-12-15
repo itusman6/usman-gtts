@@ -316,17 +316,14 @@ def text_to_speech():
         os.unlink(temp_file.name)
         
         # Return as base64 encoded or direct binary
-        return jsonify({
-            "success": True,
-            "audio_data": audio_data.hex(),  # Convert to hex for JSON transmission
-            "size": len(audio_data),
-            "voice": google_voice,
-            "language": lang
-        })
+        return send_file(temp_file.name, 
+                        mimetype='audio/mp3',
+                        as_attachment=True,
+                        download_name='speech.mp3')
         
     except Exception as e:
-        logging.error(f"Error in TTS conversion: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"Error: {str(e)}")
+        return str(e), 500
 
 @app.route('/api/voices', methods=['GET'])
 def get_voices():
@@ -562,3 +559,4 @@ def get_language_flag(lang_code):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
