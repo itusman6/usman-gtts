@@ -22,30 +22,42 @@ app.add_middleware(
 # 25+ REAL NEURAL VOICES
 # ------------------------------------
 VOICES = {
-    "en_male": "en-US-GuyNeural",
-    "en_female": "en-US-JennyNeural",
+    # English
+    "en_male_1": "en-US-GuyNeural",
+    "en_female_1": "en-US-JennyNeural",
+    "en_female_2": "en-US-AriaNeural",
+    "en_male_2": "en-US-DavisNeural",
     "en_uk_male": "en-GB-RyanNeural",
     "en_uk_female": "en-GB-SoniaNeural",
+    "en_india_male": "en-IN-PrabhatNeural",
     "en_india_female": "en-IN-NeerjaNeural",
 
+    # Spanish
     "es_male": "es-ES-AlvaroNeural",
     "es_female": "es-ES-ElviraNeural",
+    "es_mexico": "es-MX-JorgeNeural",
 
+    # French
     "fr_male": "fr-FR-HenriNeural",
     "fr_female": "fr-FR-DeniseNeural",
 
+    # German
     "de_male": "de-DE-ConradNeural",
     "de_female": "de-DE-KatjaNeural",
 
+    # Italian / Portuguese
+    "it_male": "it-IT-DiegoNeural",
     "it_female": "it-IT-ElsaNeural",
+    "pt_br_male": "pt-BR-AntonioNeural",
     "pt_br_female": "pt-BR-FranciscaNeural",
 
+    # Asian
     "ja_female": "ja-JP-NanamiNeural",
     "ko_female": "ko-KR-SunHiNeural",
-
     "zh_male": "zh-CN-YunxiNeural",
     "zh_female": "zh-CN-XiaoxiaoNeural",
 
+    # Arabic / Russian / Hindi
     "ar_male": "ar-SA-HamedNeural",
     "ru_female": "ru-RU-SvetlanaNeural",
     "hi_female": "hi-IN-SwaraNeural",
@@ -112,6 +124,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 
 
