@@ -1,0 +1,154 @@
+import io
+import base64
+import tempfile
+from typing import Optional
+from enum import Enum
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+import numpy as np
+from scipy.io import wavfile
+from gtts import gTTS
+
+# -------------------------
+# App setup
+# -------------------------
+app = FastAPI(
+    title="Simple TTS API",
+    description="Vercel-safe Text to Speech API using gTTS",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -------------------------
+# Models
+# -------------------------
+class Language(str, Enum):
+    en = "en"
+    es = "es"
+    fr = "fr"
+    de = "de"
+    it = "it"
+    pt = "pt"
+    ru = "ru"
+    ja = "ja"
+    zh = "zh"
+    ko = "ko"
+    hi = "hi"
+    ar = "ar"
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., max_length=1000)
+    language: Language = Language.en
+    slow: bool = False
+
+class TTSResponse(BaseModel):
+    success: bool
+    audio_base64: Optional[str]
+    format: str = "mp3"
+
+# -------------------------
+# Helpers
+# -------------------------
+def gtts_audio(text: str, lang: str, slow: bool) -> bytes:
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        path = f.name
+
+    tts = gTTS(text=text, lang=lang, slow=slow)
+    tts.save(path)
+
+    with open(path, "rb") as f:
+        data = f.read()
+
+    return data
+
+
+def demo_wave(text: str, sample_rate=22050) -> bytes:
+    duration = max(len(text) * 0.05, 0.5)
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    wave = 0.4 * np.sin(2 * np.pi * 440 * t)
+    wave = (wave * 32767).astype(np.int16)
+
+    buffer = io.BytesIO()
+    wavfile.write(buffer, sample_rate, wave)
+    return buffer.getvalue()
+
+# -------------------------
+# Routes
+# -------------------------
+@app.get("/")
+def root():
+    return {
+        "name": "Simple TTS API",
+        "engine": "gTTS",
+        "status": "running",
+        "vercel_safe": True
+    }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/tts")
+def tts_get(
+    text: str = Query(..., max_length=1000),
+    language: Language = Language.en,
+    slow: bool = False,
+    download: bool = False
+):
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text is empty")
+
+    try:
+        audio = gtts_audio(text, language.value, slow)
+        headers = {}
+
+        if download:
+            headers["Content-Disposition"] = 'attachment; filename="speech.mp3"'
+
+        return StreamingResponse(
+            io.BytesIO(audio),
+            media_type="audio/mpeg",
+            headers=headers
+        )
+
+    except Exception:
+        # fallback demo audio
+        audio = demo_wave(text)
+        return StreamingResponse(
+            io.BytesIO(audio),
+            media_type="audio/wav"
+        )
+
+
+@app.post("/tts", response_model=TTSResponse)
+def tts_post(data: TTSRequest):
+    try:
+        audio = gtts_audio(data.text, data.language.value, data.slow)
+        return TTSResponse(
+            success=True,
+            audio_base64=base64.b64encode(audio).decode(),
+            format="mp3"
+        )
+    except Exception:
+        audio = demo_wave(data.text)
+        return TTSResponse(
+            success=True,
+            audio_base64=base64.b64encode(audio).decode(),
+            format="wav"
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
