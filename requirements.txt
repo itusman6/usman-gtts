@@ -1,9 +1,8 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
-torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
-TTS==0.21.0
 numpy==1.24.3
-scipy==1.11.4
-librosa==0.10.1
 soundfile==0.12.1
+espnet_tts_frontend==0.0.9
+phonemizer==3.2.1
+gtts==2.4.0
