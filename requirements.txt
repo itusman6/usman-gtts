@@ -1,5 +1,3 @@
 fastapi
 uvicorn
-gtts
-numpy
-scipy
+edge-tts
