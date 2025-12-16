@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 # Check if we're in production (Vercel has this env var)
 IS_VERCEL = os.getenv("VERCEL") == "1"
+PYTHON_VERSION = f"{os.sys.version_info.major}.{os.sys.version_info.minor}"
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -63,7 +64,7 @@ def get_model_path(model_name: str = "tts_models/en/ljspeech/tacotron2-DDC"):
     return model_dir / model_name.replace("/", "_")
 
 def initialize_model(
-    model_name: str = "tts_models/en/ljspeech/tacotron2-DDC",
+    model_name: str = "tts_models/en/ljspeech/glow-tts",  # Using smaller model by default
     use_cuda: bool = False
 ):
     """Initialize TTS model"""
@@ -75,20 +76,23 @@ def initialize_model(
     try:
         # Import TTS here to handle errors gracefully
         from TTS.api import TTS
-        from TTS.utils.manage import ModelManager
         
         print(f"Initializing TTS model: {model_name}")
+        print(f"Python version: {PYTHON_VERSION}")
+        print(f"PyTorch version: {torch.__version__}")
         
-        # Check if CUDA is available
-        if use_cuda and torch.cuda.is_available():
-            device = "cuda"
-            print("Using CUDA for TTS")
-        else:
-            device = "cpu"
-            print("Using CPU for TTS")
+        # Always use CPU on Vercel
+        device = "cpu"
+        print(f"Using {device} for TTS (Vercel doesn't support CUDA)")
         
-        # Initialize TTS
-        _tts_model = TTS(model_name, progress_bar=False).to(device)
+        try:
+            # Try to initialize with the specified model
+            _tts_model = TTS(model_name, progress_bar=False).to(device)
+        except Exception as e:
+            print(f"Failed to load model {model_name}: {e}")
+            print("Falling back to a smaller model...")
+            # Fallback to a smaller, more reliable model
+            _tts_model = TTS("tts_models/en/ljspeech/glow-tts", progress_bar=False).to(device)
         
         # Check if model has speaker manager (for XTTS models)
         try:
@@ -98,7 +102,7 @@ def initialize_model(
         except:
             _speaker_manager = None
         
-        print(f"TTS model '{model_name}' initialized successfully")
+        print(f"TTS model initialized successfully")
         return _tts_model, _speaker_manager
         
     except ImportError as e:
@@ -124,7 +128,7 @@ def text_to_speech(
     language: Optional[str] = "en",
     emotion: Optional[str] = None,
     speed: float = 1.0,
-    model_name: str = "tts_models/en/ljspeech/tacotron2-DDC"
+    model_name: str = "tts_models/en/ljspeech/glow-tts"  # Smaller default model
 ):
     """Convert text to speech using Coqui TTS"""
     try:
@@ -145,13 +149,6 @@ def text_to_speech(
         if language and hasattr(tts_model, 'language'):
             params['language'] = language
         
-        # Add emotion if supported
-        if emotion and hasattr(tts_model, 'set_emotion'):
-            try:
-                tts_model.set_emotion(emotion)
-            except:
-                pass
-        
         # Generate speech
         print(f"Generating speech for text: {text[:50]}...")
         
@@ -164,16 +161,21 @@ def text_to_speech(
             temp_path = temp_file.name
             
             # Generate audio
-            if speaker_id and 'speaker' in params:
-                # For XTTS models with speaker
-                tts_model.tts_to_file(
-                    text=text,
-                    speaker=params['speaker'],
-                    language=language,
-                    file_path=temp_path
-                )
-            else:
-                # For regular models
+            try:
+                if speaker_id and 'speaker' in params:
+                    # For XTTS models with speaker
+                    tts_model.tts_to_file(
+                        text=text,
+                        speaker=params['speaker'],
+                        language=language,
+                        file_path=temp_path
+                    )
+                else:
+                    # For regular models
+                    tts_model.tts_to_file(text=text, file_path=temp_path)
+            except Exception as e:
+                print(f"TTS generation error: {e}")
+                # Try without any special parameters
                 tts_model.tts_to_file(text=text, file_path=temp_path)
             
             # Read the generated audio
@@ -181,7 +183,10 @@ def text_to_speech(
                 audio_data = audio_file.read()
             
             # Clean up temp file
-            Path(temp_path).unlink()
+            try:
+                Path(temp_path).unlink()
+            except:
+                pass
             
             return audio_data
             
@@ -192,6 +197,8 @@ def text_to_speech(
 async def startup_event():
     """Initialize on startup"""
     print("Starting up TTS API...")
+    print(f"Running on Vercel: {IS_VERCEL}")
+    print(f"Python version: {PYTHON_VERSION}")
     
     # Clean up any old temp files
     cleanup_temp_files()
@@ -217,6 +224,9 @@ async def root():
         "name": "Coqui TTS API",
         "version": "1.0.0",
         "status": "running",
+        "python_version": PYTHON_VERSION,
+        "environment": "vercel" if IS_VERCEL else "local",
+        "pytorch_version": torch.__version__,
         "endpoints": {
             "/": "This info page",
             "/tts": "Generate speech from text (GET)",
@@ -235,8 +245,9 @@ async def health_check():
         return {
             "status": "healthy",
             "model_loaded": tts_model is not None,
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "environment": "vercel" if IS_VERCEL else "local"
+            "device": "cpu",  # Vercel only supports CPU
+            "environment": "vercel" if IS_VERCEL else "local",
+            "python_version": PYTHON_VERSION
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
@@ -260,21 +271,25 @@ async def get_speakers():
 async def get_models():
     """Get available TTS models"""
     try:
-        from TTS.api import TTS
-        models = TTS().list_models()
+        # Return a curated list of smaller models for Vercel
+        models = [
+            "tts_models/en/ljspeech/glow-tts",  # Small, fast
+            "tts_models/en/ljspeech/tacotron2-DDC",
+            "tts_models/en/ljspeech/speedy-speech",
+            "tts_models/en/vctk/vits",
+        ]
+        
         return {
             "models": models,
-            "count": len(models)
+            "count": len(models),
+            "note": "Using curated list for Vercel compatibility"
         }
     except Exception as e:
-        # Return some default models if TTS is not fully initialized
+        # Return some default models
         return {
             "models": [
-                "tts_models/en/ljspeech/tacotron2-DDC",
                 "tts_models/en/ljspeech/glow-tts",
-                "tts_models/en/ljspeech/speedy-speech",
-                "tts_models/en/vctk/vits",
-                "tts_models/multilingual/multi-dataset/xtts_v2"
+                "tts_models/en/ljspeech/tacotron2-DDC",
             ],
             "message": "Using default model list"
         }
@@ -286,17 +301,24 @@ async def tts_get(
     language: Optional[str] = Query("en", description="Language code"),
     emotion: Optional[str] = Query(None, description="Emotion"),
     speed: Optional[float] = Query(1.0, ge=0.5, le=2.0, description="Speech speed"),
-    download: Optional[bool] = Query(False, description="Force download instead of streaming")
+    download: Optional[bool] = Query(False, description="Force download instead of streaming"),
+    model: Optional[str] = Query("tts_models/en/ljspeech/glow-tts", description="Model to use")
 ):
     """Generate speech from text (GET endpoint)"""
     try:
+        # Limit text length for Vercel
+        if len(text) > 500:
+            text = text[:500]
+            print(f"Text truncated to 500 characters for Vercel")
+        
         # Generate audio
         audio_data = text_to_speech(
             text=text,
             speaker_id=speaker,
             language=language,
             emotion=emotion,
-            speed=speed
+            speed=speed,
+            model_name=model
         )
         
         # Create response
@@ -317,9 +339,12 @@ async def tts_get(
 async def tts_post(request: TTSRequest):
     """Generate speech from text (POST endpoint with JSON response)"""
     try:
+        # Limit text length for Vercel
+        text = request.text[:500] if len(request.text) > 500 else request.text
+        
         # Generate audio
         audio_data = text_to_speech(
-            text=request.text,
+            text=text,
             speaker_id=request.speaker_id,
             language=request.language,
             emotion=request.emotion,
@@ -349,9 +374,12 @@ async def tts_post(request: TTSRequest):
 async def tts_post_audio(request: TTSRequest):
     """Generate speech from text (POST endpoint returning audio directly)"""
     try:
+        # Limit text length for Vercel
+        text = request.text[:500] if len(request.text) > 500 else request.text
+        
         # Generate audio
         audio_data = text_to_speech(
-            text=request.text,
+            text=text,
             speaker_id=request.speaker_id,
             language=request.language,
             emotion=request.emotion,
