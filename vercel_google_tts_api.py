@@ -1,30 +1,31 @@
-import io
-import base64
-from fastapi import FastAPI, Form
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from TTS.api import TTS
+import uuid
+import os
+import uvicorn
 
 app = FastAPI()
 
-# Load model once per cold start (Vercel caches)
-tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False, gpu=False)
+# Load model once (CPU-friendly model)
+tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
 
-@app.post("/api/speak")
-async def speak(text: str = Form(...), voice: str = Form("all"), format: str = Form("wav")):
-    """
-    Generate TTS audio for given text.
-    Returns: base64 encoded audio
-    """
-    # Generate in-memory file
-    file_buffer = io.BytesIO()
-    tts.tts_to_file(text=text, speaker=voice, file_path=file_buffer)
-    
-    file_buffer.seek(0)
-    audio_bytes = file_buffer.read()
-    encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
-    
-    return JSONResponse({"audio_base64": encoded_audio, "format": format})
+OUTPUT_DIR = "audio"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-@app.get("/api/voices")
-async def get_voices():
-    return {"voices": tts.speakers}
+@app.get("/tts")
+def text_to_speech(text: str):
+    filename = f"{uuid.uuid4()}.wav"
+    path = os.path.join(OUTPUT_DIR, filename)
+
+    tts.tts_to_file(text=text, file_path=path)
+
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=filename
+    )
+
+# Only run if executed directly (not imported)
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
